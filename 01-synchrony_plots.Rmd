@@ -1,0 +1,580 @@
+---
+title: "Co-occurrence and spatiotemporal distribution of malaria and dengue in Loreto, Peru - Script for analysis and plots"
+author: "Paloma M. Carcamo, Jesus M. Quispe, Gabriel Carrasco-Escobar"
+output: html_document
+---
+
+```{r}
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(tidyverse, RColorBrewer, biscale, cowplot,
+               patchwork, sf, pals, broom, metR, colrspace, spdep)
+```
+
+### Load data
+
+```{r}
+malaria_raw <- read_csv("data/malaria.csv")
+dengue_raw <- read.csv("data/dengue.csv", sep = ";", encoding="UTF-8")
+pop_raw <- read_rds("data/district_pop_1990-2022.rds")
+data(Peru, package = "innovar")
+```
+
+### Format data
+
+```{r}
+# Aggregate malaria data by week
+malaria <- malaria_raw |> 
+  mutate(week_start =  floor_date(date_not, unit = "week"),
+         ubigeo = as.character(ubigeo),
+         year = epiyear(week_start),
+         week = epiweek(week_start)) |> 
+  group_by(year, week, week_start, ubigeo) |> 
+  summarise(cases_m = n())
+
+# Aggregate dengue data by week
+dengue <- dengue_raw |> 
+  mutate(date_not = as.Date(date_not, format = "%d/%m/%Y"),
+         week_start =  floor_date(date_not, unit = "week"),
+         year = epiyear(week_start),
+         week = epiweek(week_start),
+         ubigeo = as.character(ubigeo)) |> 
+  group_by(year, week, week_start, ubigeo) |> 
+  summarise(cases_d = n())
+
+# Create grid with all weeks (2000-2021) and ubigeos (Loreto, per 2017 census)
+all_weeks <- data.frame(date = seq(as.Date("2000-01-02"), as.Date("2021-12-31"), by = "days")) |> 
+  mutate(week_start = floor_date(date, unit = "week")) |> 
+  group_by(week_start) |> 
+  summarise() |> 
+  mutate(year = epiyear(week_start),
+         week = epiweek(week_start))
+
+ubi <- data.frame(ubigeo = unique(Peru[Peru$dep == "LORETO",]$ubigeo))
+
+grid <- cross_join(all_weeks, ubi)
+
+# Process population dataset
+  # Using linear splines (na.approx) to estimate population in districts created during the study period
+  # (cubic splines create negative population values)
+pop <- pop_raw |> 
+  filter(year %in% c(2000:2021),
+         ubigeo %in% ubi$ubigeo) |> 
+  group_by(year) |> 
+  complete(ubigeo = as.character(ubi$ubigeo)) |> 
+  group_by(ubigeo) |> 
+  mutate(population = zoo::na.approx(population, rule = 2, na.rm = FALSE))
+
+# Join dengue, malaria and population datasets
+  # By week
+data_week <- grid |> 
+  left_join(malaria, by = c("week_start", "year", "week", "ubigeo")) |> 
+  left_join(dengue, by = c("week_start", "year", "week", "ubigeo")) |> 
+  mutate(cases_m = if_else(is.na(cases_m), 0, cases_m),
+         cases_d = if_else(is.na(cases_d), 0, cases_d)) |> 
+  left_join(pop, by = c("year", "ubigeo")) |> 
+  mutate(inc_m = cases_m/population*1000,
+         inc_d = cases_d/population*1000) |> 
+  left_join(Peru[Peru$dep == "LORETO", c("ubigeo", "distr")] |> st_drop_geometry(), by = "ubigeo") |> 
+  arrange(week_start,distr)
+
+  # By year
+data_year <- data_week |> 
+  group_by(year, ubigeo) |> 
+  summarise(cases_m = sum(cases_m),
+            cases_d = sum(cases_d),
+            population = mean(population),
+            inc_m = cases_m/population*1000,
+            inc_d = cases_d/population*1000) |> 
+  left_join(Peru[Peru$dep == "LORETO", c("ubigeo", "distr")] |> st_drop_geometry(), by = "ubigeo") |> 
+  group_by(year) |> 
+  mutate(cut_m = cut(inc_m, breaks = c(-1, 0, 1, 1500)),
+         cut_d = cut(inc_d, breaks = c(-1, 0, 0.4, 1500))) |> 
+  ungroup()
+```
+
+### Time-lagged cross-correlation
+
+```{r}
+# Format data for TLCC
+data_week_var <- data_week |> 
+  ungroup() |> 
+  group_by(distr) |> 
+  mutate(cases_m_var = (cases_m/lag(cases_m) - 1) * 100,
+         cases_d_var = (cases_d/lag(cases_d) - 1) * 100) |> 
+  mutate(cases_m_var = if_else(is.finite(cases_m_var), cases_m_var, 0),
+         cases_d_var = if_else(is.finite(cases_d_var), cases_d_var, 0),
+         cases_m_var = if_else(is.nan(cases_m_var), 0, cases_m_var),
+         cases_d_var = if_else(is.nan(cases_d_var), 0, cases_d_var)) |> 
+  mutate(cases_m_var_abs = (cases_m - lag(cases_m)),
+         cases_d_var_abs = (cases_d - lag(cases_d))) |> 
+  mutate(cases_m_var_abs = if_else(is.finite(cases_m_var_abs), cases_m_var_abs, 0),
+         cases_d_var_abs = if_else(is.finite(cases_d_var_abs), cases_d_var_abs, 0),
+         cases_m_var_abs = if_else(is.nan(cases_m_var_abs), 0, cases_m_var_abs),
+         cases_d_var_abs = if_else(is.nan(cases_d_var_abs), 0, cases_d_var_abs)) |> 
+  filter(!is.na(cases_m_var)) |> 
+  filter(!is.na(cases_d_var)) |> 
+  filter(!is.na(cases_m_var_abs)) |> 
+  filter(!is.na(cases_d_var_abs))
+
+# Create TLCC function for lags of 2 years (104 weeks)
+cross_corr <- function(df, lag = 104) {
+    tidy(ccf(x = df$cases_d_var,
+             y = df$cases_m_var,
+             lag.max = lag,
+             plot = FALSE))
+}
+
+by_distr <- data_week_var |> 
+  ungroup() |> 
+  select(distr, week_start, 
+         cases_m, cases_d, 
+         cases_m_var, cases_d_var,
+         cases_m_var_abs, cases_d_var_abs) |> 
+  group_by(distr) |> 
+  nest()
+
+# Calculate TLCC coefficients
+by_distr2 <- by_distr |> 
+  mutate(crosscorr = purrr::map(data, cross_corr)) 
+
+ccfs <- unnest(by_distr2, crosscorr)
+
+# Create db with maximum coefficients
+lines_vert <- ccfs |> 
+  select(distr, lag, acf)|> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf,2)) |> 
+  unique() |> 
+  mutate(district = case_when(distr == "TENIENTE MANUEL CLAVERO" ~ "T. MANUEL CLAVERO",
+                              distr == "TENIENTE CESAR LOPEZ ROJAS" ~ "T. CESAR LOPEZ ROJAS",
+                              .default = distr))
+```
+
+### Figure 1A: Districts in Loreto
+
+```{r}
+distr <- Peru |> 
+  filter(dep.code == 16) |> 
+  mutate(Province = str_to_title(prov),
+         District = str_to_title(distr),
+         District = if_else(District == "Teniente Cesar Lopez Rojas", "T. Cesar Lopez R.", District))
+
+fig_1a <- distr |> 
+    ggplot() +
+    geom_sf(aes(fill = Province), linewidth = 0.5, color = "black") +
+    ggrepel::geom_label_repel(aes(label = District, geometry = geometry),
+                              label.size = NA,
+                              label.padding = 0.05,
+                              na.rm = TRUE,
+                              fill = alpha(c("white"), 0.4),
+                              stat = "sf_coordinates", 
+                              max.overlaps = 100,
+                              size = 3) +
+  scale_fill_manual(values = as.vector(brewer.seqseq2(8))) +
+  labs(title = "A") +
+  theme_void() +
+  theme(legend.position = c(0.99, 0.2),
+        legend.title = element_text(hjust = 0.5, size = 9),
+        legend.text = element_text(size=7)) +
+  guides(fill = guide_legend(title.position = "top", 
+                             title.hjust = 0.5,
+                             ncol = 2))
+```
+
+### Figure 1B: Incidence line plots
+
+```{r}
+fig_1b <- data_week |> 
+  mutate(month = month(week_start)) |>
+  group_by(year, month) |> 
+  summarise(week_start = min(week_start),
+            Dengue = sum(cases_d),
+            Malaria = sum(cases_m)) |> 
+  ggplot(aes(x = week_start)) +
+  geom_line(aes(y = Malaria, color = "Malaria"), size = 1) +
+  geom_line(aes(y = Dengue, color = "Dengue"), size = 1) +
+  geom_point(aes(y = Malaria, color = "Malaria", shape = "Malaria"), shape = 18, size = 1.2) +
+  geom_point(aes(y = Dengue, color = "Dengue", shape = "Dengue"), shape = 18, size = 1.2) +
+  scale_color_discrete(type = c(brewer.pal(3, "Blues")[3], brewer.pal(3, "Reds")[3])) +
+  labs(x = "", y = "Reported cases", color = "", title = "B") +
+  theme_classic() +
+  theme(legend.position = c(0.9, 0.85),
+        legend.title = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        text = element_text(size = 16),
+        axis.line=element_line(size=0.8),
+        panel.grid.major.y = element_line(),
+        panel.grid.minor.y = element_line()) +
+  guides(color = guide_legend(title = NULL))
+```
+
+### Figure 1C: Co-occurrence maps
+
+```{r}
+data <- bi_class(data_year, x = cut_m, y = cut_d, dim = 3)
+
+fig_1c <- Peru |> 
+  right_join(data, by = "ubigeo") |> 
+  filter(year %in% c(2000, 2005, 2010, 2015, 2020)) |> 
+  ggplot(lwd = 0.3) +
+  geom_sf(aes(fill = bi_class), color = "black", linewidth = 0.5, size = 0.01, show.legend = FALSE) +
+  bi_scale_fill(pal = "DkViolet", dim = 3) +
+  labs(title = "C") +
+  facet_wrap(~ year, ncol = 5) +
+  theme_void() +
+  theme(plot.title = element_text(margin = margin(t = 40, b = -12))) 
+
+legend <- bi_legend(pal = "DkViolet",
+                    dim = 3,
+                    xlab = "Malaria",
+                    ylab = "Dengue")
+```
+
+### Figure 1
+
+```{r}
+layout <- "AAAAAABBBBBB
+            AAAAAABBBBBB
+            AAAAAABBBBBB
+            AAAAAABBBBBB
+            CCCCCCCCCCCD
+            CCCCCCCCCCCD"
+
+fig_1a + wrap_elements(full = fig_1b) + fig_1c + legend + plot_layout(design = layout) & theme(text = element_text(size = 18))
+
+ggsave("plots/figure1.png", width = 14, height = 9)
+```
+
+### Figure 2: Results of TLCC for eight selected districts
+
+```{r}
+lines_vert2 <- lines_vert |> 
+  filter(distr %in% c("TAPICHE", "ALTO TAPICHE", "YAGUAS", "YAQUERANA",
+                      "NAUTA", "TENIENTE MANUEL CLAVERO", "ANDOAS", "YURIMAGUAS"))
+
+tlcc_8d_df <- ccfs |> 
+  filter(distr %in% c("TAPICHE", "ALTO TAPICHE", "YAGUAS", "YAQUERANA",
+                      "NAUTA", "TENIENTE MANUEL CLAVERO", "ANDOAS", "YURIMAGUAS")) |>
+  mutate(group = case_when(distr  %in% c("TAPICHE", "ALTO TAPICHE") ~ "a",
+                           distr  %in% c("YAGUAS", "YAQUERANA") ~ "b",
+                           distr  %in% c("NAUTA", "TENIENTE MANUEL CLAVERO") ~ "c",
+                           distr  %in% c("ANDOAS", "YURIMAGUAS") ~ "d"))
+
+ggplot(data = tlcc_8d_df, aes(lag, acf, color = group)) +
+  geom_hline(yintercept = c(-0.1, 0, 0.1), linetype = 2,color="gray") +
+  geom_point(alpha = 2 / 3, size=0.5) +
+  geom_line() +
+  geom_vline(data = lines_vert2, aes(xintercept = lag),
+           linetype = 2, color = "tan2") +
+  geom_label(data = lines_vert2, aes(label = 
+                                       paste("\u03C1", "=", acf, ",", "Lag", "=", lag), 
+                                     x = 15, y = 0.5),
+          fontface = "bold", size = 3.5, color = "tan2") +
+  facet_wrap(~ factor(distr,
+                      levels = c("TAPICHE", "ALTO TAPICHE", "YAGUAS", "YAQUERANA",
+                      "NAUTA", "TENIENTE MANUEL CLAVERO", "ANDOAS", "YURIMAGUAS")), 
+             ncol = 2, dir = "h") +
+  scale_color_manual(values = brewer.pal(4, "Paired")) + 
+  theme_bw() +
+  labs(x = "Lag (weeks)", y = "TLCC coefficient") +
+  theme(strip.background =element_rect(fill="black"),
+        strip.text = element_text(colour = 'white'),
+        legend.position = "none") 
+
+ggsave("plots/figure2.svg", width = 7, height = 8)
+ggsave("plots/figure2.png", width = 7, height = 8)
+```
+
+### Figure 3A: TLCC categories map
+
+```{r}
+fig_3a <- Peru |> 
+  filter(dep == "LORETO") |> 
+  left_join(lines_vert, by = "distr") |>
+  mutate(category = if_else(acf > 0,
+                            if_else(lag > 0,
+                                   "Positive TLCC, \npositive lag",
+                                   "Positive TLCC, \nnegative lag"),
+                            if_else(lag > 0,
+                                    "Negative TLCC, \npositive lag",
+                                    "Negative TLCC, \nnegative lag"))) |> 
+  ggplot() +
+  geom_sf(aes(fill = category)) +
+  labs(fill = "", title = "A") +
+  scale_fill_discrete(type = brewer.pal(4, "Paired"),
+                      labels = function(breaks) {breaks[is.na(breaks)] <- "Not calculated"; breaks}) +
+  theme_void() +
+  theme(legend.justification = "top",
+        legend.text = element_text(size = 7))
+```
+
+### Figure 3A inset: Coefficient scatterplot
+
+```{r}
+fig_3a_inset <- lines_vert |> 
+  mutate(category = if_else(acf > 0,
+                            if_else(lag > 0,
+                                   "Positive TLCC, \npositive lag",
+                                   "Positive TLCC, \nnegative lag"),
+                            if_else(lag > 0,
+                                    "Negative TLCC, \npositive lag",
+                                    "Negative TLCC, \nnegative lag"))) |>
+  ggplot(aes(x = lag, y = acf, color = category)) +
+  geom_point() +
+  geom_hline(aes(yintercept = 0)) +
+  geom_vline(aes(xintercept = 0)) +
+  ggrepel::geom_label_repel(data = lines_vert |> 
+                              mutate(district = str_to_title(district)) |> 
+                              filter(abs(acf) > 0.2), 
+                            aes(label = district),
+                            label.size = NA,
+                            min.segment.length = 0,
+                            fill = alpha(c("white"), 0.3),
+                            size = 3,
+                            color = "black") +
+  labs(x = "Lags (weeks)",
+       y = "TLCC coefficient",
+       color = "") +
+  scale_color_discrete(type = brewer.pal(4, "Paired")) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.line = element_blank(),
+        panel.background = element_blank())
+```
+
+### Figure 3B: Local Moran's test for TLCC
+
+```{r}
+clor_map_corr <- Peru |> 
+  filter(dep == "LORETO") |> 
+  left_join(lines_vert, by = "distr")|> 
+  replace_na(list(lag = 0, acf = 0))
+
+nb <- poly2nb(clor_map_corr, queen = TRUE)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+lcl_moran_acf <- localmoran(clor_map_corr$acf, lw)
+clor_map_corr_full_acf <- cbind(clor_map_corr, lcl_moran_acf)
+
+map_lisa_acf <- clor_map_corr_full_acf |> 
+  mutate(cen_mean_acf = acf - mean(acf), cen_moran = Ii - mean(Ii))|> 
+  add_row(distr = "extra", cen_mean_acf = 1, cen_moran = -0.1, Pr.z....E.Ii.. = 0.01)|> 
+  mutate(lisa = case_when(cen_mean_acf > 0 & cen_moran > 0 ~ "4",
+                          cen_mean_acf < 0 & cen_moran < 0 ~ "1",
+                          cen_mean_acf < 0 & cen_moran > 0 ~ "2",
+                          cen_mean_acf > 0 & cen_moran < 0 ~ "3")) |> 
+  mutate(lisa_signi = ifelse(Pr.z....E.Ii..<0.1, lisa, 0)) |> 
+  mutate(Tipo_lisa = case_when(lisa == "4" ~ "High - High",
+                               lisa == "1" ~ "Low  - Low",
+                               lisa == "2" ~ "Low  - High",
+                               lisa == "3" ~ "High  - Low")) |> 
+  mutate(Tipo_lisa_signi = case_when(lisa_signi == "4" ~ "High - High",
+                                     lisa_signi == "3" ~ "High  - Low",
+                                     lisa_signi == "2" ~ "Low  - High",
+                                     lisa_signi == "1" ~ "Low  - Low",
+                                     lisa_signi == "0" ~ "Non significant"))
+                
+fig_3b_prelim <- map_lisa_acf |> 
+  ggplot() +
+  geom_sf(aes(fill = factor(Tipo_lisa_signi, levels = c("High - High", "High  - Low", "Non significant",
+                                                      "Low  - High", "Low  - Low")))) +
+  scale_fill_brewer(type = "div", palette = 5, name = "LISA Clusters") +
+  theme_void() +
+  labs(title = "B") +
+  theme(legend.text = element_text(size=8))
+
+fig_3b <- fig_3b_prelim + theme(legend.position = "none")
+```
+
+### Figure 3C: Local Moran's test for lags
+
+```{r}
+lcl_moran_lag <- localmoran(clor_map_corr$lag, lw)
+clor_map_corr_full_lag <- cbind(clor_map_corr, lcl_moran_lag)
+
+map_lisa_lag <- clor_map_corr_full_lag |> 
+  mutate(cen_mean_lag = lag - mean(lag), cen_moran = Ii - mean(Ii))|> 
+  add_row(distr="extra", cen_mean_lag = 1, cen_moran = -0.1, Pr.z....E.Ii.. = 0.01)|> 
+  mutate(lisa = case_when(cen_mean_lag > 0 & cen_moran > 0 ~ "4",
+                          cen_mean_lag < 0 & cen_moran < 0 ~ "1",
+                          cen_mean_lag < 0 & cen_moran > 0 ~ "2",
+                          cen_mean_lag > 0 & cen_moran < 0 ~ "3")) |> 
+  mutate(lisa_signi = ifelse(Pr.z....E.Ii.. < 0.1, lisa, 0)) |> 
+  mutate(Tipo_lisa = case_when(lisa == "4" ~ "High - High",
+                               lisa == "1" ~ "Low  - Low",
+                               lisa == "2" ~ "Low  - High",
+                               lisa == "3" ~ "High  - Low")) |> 
+  mutate(Tipo_lisa_signi = case_when(lisa_signi == "4" ~ "High - High",
+                                     lisa_signi == "3" ~ "High  - Low",
+                                     lisa_signi == "2" ~ "Low  - High",
+                                     lisa_signi == "1" ~ "Low  - Low",
+                                     lisa_signi == "0" ~ "Non significant"))
+                
+fig_3c <- map_lisa_lag |> 
+  ggplot() +
+  geom_sf(aes(fill = factor(Tipo_lisa_signi, levels = c("High - High", "High  - Low", "Non significant",
+                                                      "Low  - High", "Low  - Low")))) +
+  scale_fill_brewer(type = "div", palette = 5, name = "LISA Clusters - Lag") +
+  theme_void() +
+  labs(title = "C") +
+  theme(legend.position = "none")
+```
+
+### Figure 3 legend
+
+```{r}
+fig_3legend <- get_legend(fig_3b_prelim)
+```
+
+### Figure 3
+
+```{r}
+fig_3a_full <- fig_3a + inset_element(fig_3a_inset, left = 0.7, bottom = 0, right = 1.4, top = 0.45)
+
+layout2 <- "AAAAAAA#BBBBB##
+           AAAAAAA#BBBBB##
+           AAAAAAA#BBBBBDD
+           AAAAAAA#CCCCCDD
+           AAAAAAA#CCCCC##
+           AAAAAAA#CCCCC##"
+
+fig_3a_full + fig_3b + fig_3c + fig_3legend + plot_layout(design = layout2)
+
+ggsave("plots/figure3.png", width = 10, height = 6)
+```
+
+### Figure S1: Co-occurrence maps for all years
+
+```{r}
+fig_s1 <- Peru |> 
+  right_join(data, by = "ubigeo") |> 
+  ggplot() +
+  geom_sf(aes(fill = bi_class), color = "black", size = 0.01, show.legend = FALSE) +
+  bi_scale_fill(pal = "DkViolet", dim = 3) +
+  facet_wrap(~ year) +
+  theme_void() +
+  theme(plot.title = element_text(margin = margin(t = 40, b = -12)))
+
+
+fig_s1 + inset_element(legend, left = 0, bottom = 0.05, right = 1.7, top = 0.2)
+
+ggsave("plots/figureS1.png", height = 10, width = 8)
+```
+
+### Figure S2: Dengue incidence
+
+```{r}
+(fig_s2 <- Peru |> 
+  right_join(data_year, by = "ubigeo") |> 
+  ggplot() +
+  geom_sf(aes(fill = inc_d), lwd = 0.2, color = "black") +
+  scale_fill_gradientn(name = "Dengue incidence \nper 1000",
+                       colours = brewer.pal(9, "Blues"),
+                       trans = "log1p", 
+                       breaks = c(0, 3, 30), 
+                       labels = c(0, 3, 30)) +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white')) +
+  facet_wrap(~year, ncol = 6))
+
+ggsave("plots/figureS2.png", width = 14, height = 10)
+```
+
+### Figure S3: Malaria incidence
+
+```{r}
+(fig_s3 <- Peru |> 
+  right_join(data_year, by = "ubigeo") |> 
+  ggplot() +
+  geom_sf(aes(fill = inc_m), lwd = 0.2, color = "black") +
+  scale_fill_gradientn(name = "Malaria incidence \nper 1000",
+                       colours = brewer.pal(9, "Reds"),
+                       trans = "log1p", 
+                       breaks = c(0, 6, 60, 600), 
+                       labels = c(0, 6, 60, 600)) +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white')) +
+  facet_wrap(~year, ncol = 6))
+
+ggsave("plots/figureS3.png", width = 14, height = 10)
+```
+
+### Figure S4: Results of TLCC for all districts
+
+```{r}
+ccfs |> 
+  mutate(district = case_when(distr == "TENIENTE MANUEL CLAVERO" ~ "T. MANUEL CLAVERO",
+                              distr == "TENIENTE CESAR LOPEZ ROJAS" ~ "T. CESAR LOPEZ ROJAS",
+                              .default = distr)) |> 
+  ggplot(aes(lag, acf, color = district)) +
+  geom_hline(yintercept = c(-0.1, 0, 0.1), linetype = 2, color = "gray") +
+  geom_point(alpha = 2 / 3,size=0.5) +
+  geom_line() +
+  geom_vline(data = lines_vert, 
+             aes(xintercept = lag),
+             linetype = 2,
+             color = "tan2") +
+  geom_label(data = lines_vert |> filter(!is.na(lag)),
+             aes(label = paste("\u03C1","=",acf,",","Lag","=",lag), x = 15, y = 0.5),
+             fontface = "bold",
+             size = 3.5,
+             color = "tan2")  +
+  facet_wrap(~ district) +
+  scale_color_manual(values = colorRampPalette(c("darkblue", "gold", "brown", 
+                                                 "#B2182B", "#D6604D", "#F4A582",
+                                                 "#4393C3", "#2166AC", "darkgreen",
+                                                 "darkred", "orange"))(53)) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("Lag (weeks)") +
+  ylab("TLCC coefficient") +
+  theme(strip.background = element_rect(fill = "black")) +
+  theme(strip.text = element_text(colour = 'white', face = "bold"))
+
+ggsave("plots/figureS4.png", width = 15, height = 15)
+```
+
+### Figure S5a: District-level TLCC coefficient map
+
+```{r}
+fig_s5a <- clor_map_corr |> 
+  ggplot() +
+  geom_sf(aes(fill = acf)) +
+  scale_fill_divergent(midpoint = 0,
+                       name = "TLCC coefficient") +
+  theme_void() +
+  labs(title = "A")
+```
+
+### Figure S5b: District-level lag map
+
+```{r}
+fig_s5b <- clor_map_corr |> 
+  ggplot() +
+  geom_sf(aes(fill = lag)) +
+  scale_fill_divergent(midpoint = 0,
+                       name = "Lag (weeks)") +
+  theme_void() +
+  labs(title = "B")
+```
+
+### Figure S5
+
+```{r}
+fig_s5a + fig_s5b
+
+ggsave("plots/figureS5.png", height = 4, width = 8)
+```
