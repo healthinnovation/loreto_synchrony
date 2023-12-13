@@ -5,7 +5,6 @@ output: html_document
 ---
 
 ```{r}
-
 if (!require("pacman")) install.packages("pacman")
 
 pacman::p_load(tidyverse, RColorBrewer, biscale, cowplot,
@@ -545,6 +544,7 @@ ccfs |>
   theme(strip.text = element_text(colour = 'white', face = "bold"))
 
 ggsave("plots/figureS4.png", width = 15, height = 15)
+ggsave("plots/figureS4.svg", width = 15, height = 15)
 ```
 
 ### Figure S5a: District-level TLCC coefficient map
