@@ -1,6 +1,6 @@
 # Co-occurrence and spatiotemporal distribution of malaria and dengue in Loreto, Peru
 
-*Gabriel Carrasco-Escobar, Paloma M. Carcamo, Jesus M. Quispe, Samantha Kaplan, Gordon C. McCord, Tarik Benmarhnia*
+*Paloma M. Carcamo, Samantha Kaplan, Jesus M. Quispe, Gordon C. McCord, Gabriel Carrasco-Escobar,Tarik Benmarhnia*
 
 This study aimed to assess synchony and spatial correlation in the occurrence of malaria and dengue in Loreto, Peru using time-lagged cross-correlation analysis.
 
