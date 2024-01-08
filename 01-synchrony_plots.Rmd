@@ -238,15 +238,16 @@ legend <- bi_legend(pal = "DkViolet",
 
 ```{r}
 layout <- "AAAAAABBBBBB
-            AAAAAABBBBBB
-            AAAAAABBBBBB
-            AAAAAABBBBBB
-            CCCCCCCCCCCD
-            CCCCCCCCCCCD"
+          AAAAAABBBBBB
+          AAAAAABBBBBB
+          AAAAAABBBBBB
+          CCCCCCCCCCCD
+          CCCCCCCCCCCD"
 
-fig_1a + wrap_elements(full = fig_1b) + fig_1c + legend + plot_layout(design = layout) & theme(text = element_text(size = 18))
+(fig1 <- fig_1a + wrap_elements(full = fig_1b) + fig_1c + legend + plot_layout(design = layout) & theme(text = element_text(size = 18)))
 
-ggsave("plots/figure1.png", width = 14, height = 9)
+ggsave("plots/figure1.png", plot = fig1, width = 14, height = 9)
+ggsave("plots/figure1.eps", plot = fig1, device = "eps", width = 14, height = 9, family = "sans")
 ```
 
 ### Figure 2: Results of TLCC for eight selected districts
@@ -285,8 +286,8 @@ ggplot(data = tlcc_8d_df, aes(lag, acf, color = group)) +
         strip.text = element_text(colour = 'white'),
         legend.position = "none") 
 
-ggsave("plots/figure2.svg", width = 7, height = 8)
 ggsave("plots/figure2.png", width = 7, height = 8)
+ggsave("plots/figure2.eps", device = "eps", width = 7, height = 8)
 ```
 
 ### Figure 3A: TLCC categories map
@@ -442,9 +443,10 @@ layout2 <- "AAAAAAA#BBBBB##
            AAAAAAA#CCCCC##
            AAAAAAA#CCCCC##"
 
-fig_3a_full + fig_3b + fig_3c + fig_3legend + plot_layout(design = layout2)
+(fig3 <- fig_3a_full + fig_3b + fig_3c + fig_3legend + plot_layout(design = layout2))
 
 ggsave("plots/figure3.png", width = 10, height = 6)
+ggsave("plots/figure3.eps", device = "eps", plot = fig3, width = 10, height = 6)
 ```
 
 ### Figure S1: Co-occurrence maps for all years
