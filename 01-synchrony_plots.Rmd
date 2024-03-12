@@ -6,9 +6,7 @@ output: html_document
 
 ```{r}
 if (!require("pacman")) install.packages("pacman")
-
-pacman::p_load(tidyverse, RColorBrewer, biscale, cowplot,
-               patchwork, sf, pals, broom, metR, colrspace, spdep)
+pacman::p_load(tidyverse, RColorBrewer, biscale, cowplot, patchwork, sf, pals, broom, metR, colorspace, spdep, gt, reactable)
 ```
 
 ### Load data
@@ -87,11 +85,11 @@ data_year <- data_week |>
             inc_m = cases_m/population*1000,
             inc_d = cases_d/population*1000) |> 
   left_join(Peru[Peru$dep == "LORETO", c("ubigeo", "distr")] |> st_drop_geometry(), by = "ubigeo") |> 
-  group_by(year) |> 
-  mutate(cut_m = cut(inc_m, breaks = c(-1, 0, 1, 1500)),
-         cut_d = cut(inc_d, breaks = c(-1, 0, 0.4, 1500))) |> 
-  ungroup()
+  ungroup() |> 
+  mutate(cut_m = cut(log(inc_m + 1), breaks = cartography::getBreaks(log(inc_m + 1), nclass = 3, method = "fisher"), labels = c(1:3), include.lowest = TRUE),
+         cut_d = cut(log(inc_d + 1), breaks = cartography::getBreaks(log(inc_d + 1), nclass = 3, method = "fisher"), labels = c(1:3), include.lowest = TRUE)) 
 ```
+
 
 ### Time-lagged cross-correlation
 
@@ -151,6 +149,22 @@ lines_vert <- ccfs |>
   mutate(district = case_when(distr == "TENIENTE MANUEL CLAVERO" ~ "T. MANUEL CLAVERO",
                               distr == "TENIENTE CESAR LOPEZ ROJAS" ~ "T. CESAR LOPEZ ROJAS",
                               .default = distr))
+
+# Summary measures for coefficients and lags
+
+## Positive coefficients
+mean(lines_vert$acf[lines_vert$acf > 0], na.rm = TRUE)
+sd(lines_vert$acf[lines_vert$acf > 0], na.rm = TRUE)
+
+mean(lines_vert$lag[lines_vert$acf > 0], na.rm = TRUE)
+sd(lines_vert$lag[lines_vert$acf > 0], na.rm = TRUE)
+
+## Negative coefficients
+mean(lines_vert$acf[lines_vert$acf < 0], na.rm = TRUE)
+sd(lines_vert$acf[lines_vert$acf < 0], na.rm = TRUE)
+
+mean(lines_vert$lag[lines_vert$acf < 0], na.rm = TRUE)
+sd(lines_vert$lag[lines_vert$acf < 0], na.rm = TRUE)
 ```
 
 ### Figure 1A: Districts in Loreto
@@ -169,10 +183,11 @@ fig_1a <- distr |>
                               label.size = NA,
                               label.padding = 0.05,
                               na.rm = TRUE,
-                              fill = alpha(c("white"), 0.4),
+                              fill = alpha("white", 0.6),
                               stat = "sf_coordinates", 
                               max.overlaps = 100,
-                              size = 3) +
+                              size = 3,
+                              segment.linetype = 3) +
   scale_fill_manual(values = as.vector(brewer.seqseq2(8))) +
   labs(title = "A") +
   theme_void() +
@@ -199,7 +214,7 @@ fig_1b <- data_week |>
   geom_point(aes(y = Malaria, color = "Malaria", shape = "Malaria"), shape = 18, size = 1.2) +
   geom_point(aes(y = Dengue, color = "Dengue", shape = "Dengue"), shape = 18, size = 1.2) +
   scale_color_discrete(type = c(brewer.pal(3, "Blues")[3], brewer.pal(3, "Reds")[3])) +
-  labs(x = "", y = "Reported cases", color = "", title = "B") +
+  labs(x = "", y = "Monthly reported cases", color = "", title = "B") +
   theme_classic() +
   theme(legend.position = c(0.9, 0.85),
         legend.title = element_blank(),
@@ -246,8 +261,8 @@ layout <- "AAAAAABBBBBB
 
 (fig1 <- fig_1a + wrap_elements(full = fig_1b) + fig_1c + legend + plot_layout(design = layout) & theme(text = element_text(size = 18)))
 
-ggsave("plots/figure1.png", plot = fig1, width = 14, height = 9)
-ggsave("plots/figure1.eps", plot = fig1, device = "eps", width = 14, height = 9, family = "sans")
+# ggsave("plots/figure1.png", plot = fig1, width = 14, height = 9)
+# ggsave("plots/figure1.eps", plot = fig1, device = "eps", width = 14, height = 9, family = "sans")
 ```
 
 ### Figure 2: Results of TLCC for eight selected districts
@@ -263,10 +278,13 @@ tlcc_8d_df <- ccfs |>
   mutate(group = case_when(distr  %in% c("TAPICHE", "ALTO TAPICHE") ~ "a",
                            distr  %in% c("YAGUAS", "YAQUERANA") ~ "b",
                            distr  %in% c("NAUTA", "TENIENTE MANUEL CLAVERO") ~ "c",
-                           distr  %in% c("ANDOAS", "YURIMAGUAS") ~ "d"))
+                           distr  %in% c("ANDOAS", "YURIMAGUAS") ~ "d"),
+         group = factor(group, levels = c("a", "b", "c", "d"), labels = c("Negative TLCC, \nnegative lag\n",
+                                                                          "Negative TLCC, \npositive lag\n",
+                                                                          "Positive TLCC, \nnegative lag\n",
+                                                                          "Positive TLCC, \npositive lag\n")))
 
-ggplot(data = tlcc_8d_df, aes(lag, acf, color = group)) +
-  geom_hline(yintercept = c(-0.1, 0, 0.1), linetype = 2,color="gray") +
+ggplot(tlcc_8d_df, aes(lag, acf, color = group)) +
   geom_point(alpha = 2 / 3, size=0.5) +
   geom_line() +
   geom_vline(data = lines_vert2, aes(xintercept = lag),
@@ -280,14 +298,35 @@ ggplot(data = tlcc_8d_df, aes(lag, acf, color = group)) +
                       "NAUTA", "TENIENTE MANUEL CLAVERO", "ANDOAS", "YURIMAGUAS")), 
              ncol = 2, dir = "h") +
   scale_color_manual(values = brewer.pal(4, "Paired")) + 
+  geom_segment(x = -10, xend = -50, y = -0.65, yend = -0.65,
+               arrow = arrow(length = unit(5, "pt")),
+               data = tlcc_8d_df |> filter(distr %in% c("ANDOAS", "YURIMAGUAS")),
+               color = "#3182BD") +
+  geom_segment(x = 10, xend = 50, y = -0.65, yend = -0.65,
+               arrow = arrow(length = unit(5, "pt")),
+               data = tlcc_8d_df |> filter(distr %in% c("ANDOAS", "YURIMAGUAS")),
+               color = "#DE2D26") +
+  geom_text(aes(label = "Dengue precedes\nmalaria"),
+            hjust = 1,
+            x = -55, y = -0.75,
+            data = tlcc_8d_df |> filter(distr %in% c("ANDOAS")),
+            color = "#3182BD",
+            size = 3) +
+  geom_text(aes(label = "Malaria precedes\ndengue"),
+            hjust = 0,
+            x = 55, y = -0.75,
+            data = tlcc_8d_df |> filter(distr %in% c("YURIMAGUAS")),
+            color = "#DE2D26",
+            size = 3) +
   theme_bw() +
-  labs(x = "Lag (weeks)", y = "TLCC coefficient") +
-  theme(strip.background =element_rect(fill="black"),
+  labs(x = "Lag (weeks)", y = "TLCC coefficient", color = "") +
+  theme(strip.background = element_rect(fill = "black"),
         strip.text = element_text(colour = 'white'),
-        legend.position = "none") 
+        plot.margin = unit(c(0.2, 0.5, 0.5, 0.2), "inches")) +
+  coord_cartesian(clip = "off")
 
-ggsave("plots/figure2.png", width = 7, height = 8)
-ggsave("plots/figure2.eps", device = "eps", width = 7, height = 8)
+# ggsave("plots/figure2.png", width = 7, height = 8)
+# ggsave("plots/figure2.eps", device = "eps", width = 7, height = 8)
 ```
 
 ### Figure 3A: TLCC categories map
@@ -358,35 +397,31 @@ clor_map_corr <- Peru |>
 nb <- poly2nb(clor_map_corr, queen = TRUE)
 lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 
-lcl_moran_acf <- localmoran(clor_map_corr$acf, lw)
-clor_map_corr_full_acf <- cbind(clor_map_corr, lcl_moran_acf)
+# Global Moran's test
+moran.t <- moran.test(clor_map_corr$acf, lw)
+glance_htest <- function(ht) c(ht$estimate,
+                               "Std deviate" = unname(ht$statistic),
+                               "p.value" = unname(ht$p.value))
 
-map_lisa_acf <- clor_map_corr_full_acf |> 
-  mutate(cen_mean_acf = acf - mean(acf), cen_moran = Ii - mean(Ii))|> 
-  add_row(distr = "extra", cen_mean_acf = 1, cen_moran = -0.1, Pr.z....E.Ii.. = 0.01)|> 
-  mutate(lisa = case_when(cen_mean_acf > 0 & cen_moran > 0 ~ "4",
-                          cen_mean_acf < 0 & cen_moran < 0 ~ "1",
-                          cen_mean_acf < 0 & cen_moran > 0 ~ "2",
-                          cen_mean_acf > 0 & cen_moran < 0 ~ "3")) |> 
-  mutate(lisa_signi = ifelse(Pr.z....E.Ii..<0.1, lisa, 0)) |> 
-  mutate(Tipo_lisa = case_when(lisa == "4" ~ "High - High",
-                               lisa == "1" ~ "Low  - Low",
-                               lisa == "2" ~ "Low  - High",
-                               lisa == "3" ~ "High  - Low")) |> 
-  mutate(Tipo_lisa_signi = case_when(lisa_signi == "4" ~ "High - High",
-                                     lisa_signi == "3" ~ "High  - Low",
-                                     lisa_signi == "2" ~ "Low  - High",
-                                     lisa_signi == "1" ~ "Low  - Low",
-                                     lisa_signi == "0" ~ "Non significant"))
-                
-fig_3b_prelim <- map_lisa_acf |> 
+moran.glance <- moran.t |> 
+  glance_htest() |> 
+  data.frame()
+
+reactable(moran.glance)
+```
+
+```{r}
+lcl_moran_acf <- localmoran(clor_map_corr$acf, lw)
+lcl_moran_acf_full <- cbind(clor_map_corr, lcl_moran_acf) |> 
+  mutate(stat = if_else(Pr.z....E.Ii.. < 0.05, Ii, NA))
+
+fig_3b_prelim <- lcl_moran_acf_full |> 
   ggplot() +
-  geom_sf(aes(fill = factor(Tipo_lisa_signi, levels = c("High - High", "High  - Low", "Non significant",
-                                                      "Low  - High", "Low  - Low")))) +
-  scale_fill_brewer(type = "div", palette = 5, name = "LISA Clusters") +
+  geom_sf(aes(fill = stat)) +
+  scale_fill_gradient2(low = "#d7191c", mid = "#ffffbf", high = "#1a9641", na.value = "white", limits = c(-1.2, 1.2)) +
   theme_void() +
-  labs(title = "B") +
-  theme(legend.text = element_text(size=8))
+  labs(title = "B", fill = "Local Moran \nstatistic") +
+  theme(legend.text = element_text(size = 8))
 
 fig_3b <- fig_3b_prelim + theme(legend.position = "none")
 ```
@@ -395,31 +430,13 @@ fig_3b <- fig_3b_prelim + theme(legend.position = "none")
 
 ```{r}
 lcl_moran_lag <- localmoran(clor_map_corr$lag, lw)
-clor_map_corr_full_lag <- cbind(clor_map_corr, lcl_moran_lag)
+lcl_moran_lag_full <- cbind(clor_map_corr, lcl_moran_lag) |> 
+  mutate(stat = if_else(Pr.z....E.Ii.. < 0.05, Ii, NA))
 
-map_lisa_lag <- clor_map_corr_full_lag |> 
-  mutate(cen_mean_lag = lag - mean(lag), cen_moran = Ii - mean(Ii))|> 
-  add_row(distr="extra", cen_mean_lag = 1, cen_moran = -0.1, Pr.z....E.Ii.. = 0.01)|> 
-  mutate(lisa = case_when(cen_mean_lag > 0 & cen_moran > 0 ~ "4",
-                          cen_mean_lag < 0 & cen_moran < 0 ~ "1",
-                          cen_mean_lag < 0 & cen_moran > 0 ~ "2",
-                          cen_mean_lag > 0 & cen_moran < 0 ~ "3")) |> 
-  mutate(lisa_signi = ifelse(Pr.z....E.Ii.. < 0.1, lisa, 0)) |> 
-  mutate(Tipo_lisa = case_when(lisa == "4" ~ "High - High",
-                               lisa == "1" ~ "Low  - Low",
-                               lisa == "2" ~ "Low  - High",
-                               lisa == "3" ~ "High  - Low")) |> 
-  mutate(Tipo_lisa_signi = case_when(lisa_signi == "4" ~ "High - High",
-                                     lisa_signi == "3" ~ "High  - Low",
-                                     lisa_signi == "2" ~ "Low  - High",
-                                     lisa_signi == "1" ~ "Low  - Low",
-                                     lisa_signi == "0" ~ "Non significant"))
-                
-fig_3c <- map_lisa_lag |> 
+fig_3c <- lcl_moran_lag_full |> 
   ggplot() +
-  geom_sf(aes(fill = factor(Tipo_lisa_signi, levels = c("High - High", "High  - Low", "Non significant",
-                                                      "Low  - High", "Low  - Low")))) +
-  scale_fill_brewer(type = "div", palette = 5, name = "LISA Clusters - Lag") +
+  geom_sf(aes(fill = stat)) +
+  scale_fill_gradient2(low = "#d7191c", mid = "#ffffbf", high = "#1a9641", na.value = "white", limits = c(-1.2, 1.2)) +
   theme_void() +
   labs(title = "C") +
   theme(legend.position = "none")
@@ -464,7 +481,8 @@ fig_s1 <- Peru |>
 
 fig_s1 + inset_element(legend, left = 0, bottom = 0.05, right = 1.7, top = 0.2)
 
-ggsave("plots/figureS1.png", height = 10, width = 8)
+# ggsave("plots/figureS1.png", height = 10, width = 8)
+# ggsave("plots/figureS1.eps", height = 10,  device = "eps", width = 8, family = "sans")
 ```
 
 ### Figure S2: Dengue incidence
@@ -516,37 +534,57 @@ ggsave("plots/figureS3.png", width = 14, height = 10)
 ### Figure S4: Results of TLCC for all districts
 
 ```{r}
-ccfs |> 
+bottom_row = c("VARGAS GUERRA", "YAGUAS", "YAQUERANA", "YAVARI", "YURIMAGUAS", "TORRES CAUSANA", "TROMPETEROS", "URARINAS")
+
+ccfs2 <- ccfs |> 
   mutate(district = case_when(distr == "TENIENTE MANUEL CLAVERO" ~ "T. MANUEL CLAVERO",
                               distr == "TENIENTE CESAR LOPEZ ROJAS" ~ "T. CESAR LOPEZ ROJAS",
-                              .default = distr)) |> 
-  ggplot(aes(lag, acf, color = district)) +
-  geom_hline(yintercept = c(-0.1, 0, 0.1), linetype = 2, color = "gray") +
-  geom_point(alpha = 2 / 3,size=0.5) +
-  geom_line() +
+                              .default = distr))
+
+ggplot(ccfs2, aes(lag, acf)) +
+  geom_point(alpha = 2 / 3, size = 0.5) +
+  geom_line(color = "#303030") +
   geom_vline(data = lines_vert, 
              aes(xintercept = lag),
              linetype = 2,
              color = "tan2") +
   geom_label(data = lines_vert |> filter(!is.na(lag)),
              aes(label = paste("\u03C1","=",acf,",","Lag","=",lag), x = 15, y = 0.5),
-             fontface = "bold",
              size = 3.5,
-             color = "tan2")  +
+             color = "tan2",
+             fontface = "bold")  +
   facet_wrap(~ district) +
-  scale_color_manual(values = colorRampPalette(c("darkblue", "gold", "brown", 
-                                                 "#B2182B", "#D6604D", "#F4A582",
-                                                 "#4393C3", "#2166AC", "darkgreen",
-                                                 "darkred", "orange"))(53)) +
+  geom_segment(x = -10, xend = -90, y = -0.65, yend = -0.65,
+               arrow = arrow(length = unit(5, "pt")),
+               data = ccfs2 |> filter(distr %in% bottom_row),
+               color = "#3182BD") +
+  geom_segment(x = 10, xend = 90, y = -0.65, yend = -0.65,
+               arrow = arrow(length = unit(5, "pt")),
+               data = ccfs2 |> filter(distr %in% bottom_row),
+               color = "#DE2D26") +
+  geom_text(data = ccfs2 |> filter(distr %in% bottom_row) |> filter(distr != "YURIMAGUAS"),
+            aes(label = "Dengue\nprecedes\nmalaria"),
+            hjust = 1,
+            x = -10, y = -0.85,
+            color = "#3182BD",
+            size = 3) +
+  geom_text(data = ccfs2 |> filter(distr %in% bottom_row) |> filter(distr != "YAVARI"),
+            aes(label = "Malaria\nprecedes\ndengue"),
+            hjust = 0,
+            x = 10, y = -0.85,
+            color = "#DE2D26",
+            size = 3) +
   theme_bw() +
   theme(legend.position = "none") +
-  xlab("Lag (weeks)") +
-  ylab("TLCC coefficient") +
-  theme(strip.background = element_rect(fill = "black")) +
-  theme(strip.text = element_text(colour = 'white', face = "bold"))
+  labs(x = "\n\nLag (weeks)", y = "TLCC coefficient") +
+  theme(strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white',
+                                  face = "bold"),
+        plot.margin = unit(c(0.2, 0.5, 0.5, 0.2), "inches")) +
+  coord_cartesian(clip = "off")
 
-ggsave("plots/figureS4.png", width = 15, height = 15)
-ggsave("plots/figureS4.svg", width = 15, height = 15)
+# ggsave("plots/figureS4.png", width = 15, height = 15)
+# ggsave("plots/figureS4.eps", width = 15, height = 15)
 ```
 
 ### Figure S5a: District-level TLCC coefficient map
@@ -556,9 +594,8 @@ fig_s5a <- clor_map_corr |>
   ggplot() +
   geom_sf(aes(fill = acf)) +
   scale_fill_divergent(midpoint = 0,
-                       name = "TLCC coefficient") +
-  theme_void() +
-  labs(title = "A")
+                       name = "TLCC\ncoefficient") +
+  theme_void()
 ```
 
 ### Figure S5b: District-level lag map
@@ -569,14 +606,116 @@ fig_s5b <- clor_map_corr |>
   geom_sf(aes(fill = lag)) +
   scale_fill_divergent(midpoint = 0,
                        name = "Lag (weeks)") +
-  theme_void() +
-  labs(title = "B")
+  theme_void()
+```
+
+### Figure S5C: Density plot for TLCC coefficients
+
+```{r}
+(fig_s5c <- clor_map_corr |> 
+  ggplot(aes(acf)) +
+  geom_histogram(aes(y = ..density..)) +
+  geom_density(color = "darkred", linewidth = 0.8) +
+  theme_bw() +
+  labs(x = "TLCC coefficient", y = "Density") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme(panel.grid = element_blank()))
+```
+
+### Figure S5D: Density plot for lags
+
+```{r}
+(fig_s5d <- clor_map_corr |> 
+  ggplot(aes(lag)) +
+  geom_histogram(aes(y = ..density..)) +
+   geom_density(color = "darkred", linewidth = 0.8) +
+  theme_bw() +
+  labs(x = "Lag (weeks)", y = "Density") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme(panel.grid = element_blank()))
 ```
 
 ### Figure S5
 
 ```{r}
-fig_s5a + fig_s5b
+layout3 <- "AAAAAAAABBBBBBBB
+            AAAAAAAABBBBBBBB
+            AAAAAAAABBBBBBBB
+            AAAAAAAABBBBBBBB
+            AAAAAAAABBBBBBBB
+            AAAAAAAABBBBBBBB
+            CCCCCCCCDDDDDDDD
+            CCCCCCCCDDDDDDDD"
 
-ggsave("plots/figureS5.png", height = 4, width = 8)
+fig_s5a + fig_s5b + fig_s5c + fig_s5d + 
+  plot_annotation(tag_levels = "A") +
+  plot_layout(design = layout3)
+
+# ggsave("plots/figureS5.png", height = 8, width = 12)
+# ggsave("plots/figureS5.eps", height = 8, width = 12)
 ```
+
+## Sensitivity analysis:
+
+```{r}
+# TLCC with max lag of 1 year (52 weeks)
+by_distr_1y <- by_distr |> 
+  mutate(crosscorr = purrr::map2(data, 52, cross_corr))
+
+ccfs_1y <- unnest(by_distr_1y, crosscorr)
+
+max_ccfs_1y <- ccfs_1y |> 
+  select(distr, lag, acf) |> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf, 2)) |> 
+  unique() |> 
+  mutate(window = "1 year")
+
+# TLCC with max lag of 6 months (25 weeks)
+by_distr_6m <- by_distr |> 
+  mutate(crosscorr = purrr::map2(data, 25, cross_corr))
+
+ccfs_6m <- unnest(by_distr_6m, crosscorr)
+
+max_ccfs_6m <- ccfs_6m |> 
+  select(distr, lag, acf) |> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf, 2)) |> 
+  unique() |> 
+  mutate(window = "6 months")
+
+ccf_by_window <- lines_vert |> 
+  mutate(window = "2 years") |> 
+  select(-district) |> 
+  rbind(max_ccfs_1y) |> 
+  rbind(max_ccfs_6m)
+
+map_ccf_by_window <- Peru |> 
+  filter(dep == "LORETO") |> 
+  left_join(ccf_by_window, by = "distr")|> 
+  replace_na(list(lag = 0, acf = 0)) |> 
+  mutate(window = factor(window, levels = c("6 months", "1 year", "2 years")))
+
+coeff_windows <- map_ccf_by_window |> 
+  ggplot() +
+  geom_sf(aes(fill = acf)) +
+  scale_fill_divergent(midpoint = 0,
+                       name = "TLCC\ncoefficient") +
+  theme_void() +
+  facet_wrap(~window)
+
+lag_windows <- map_ccf_by_window |> 
+  ggplot() +
+  geom_sf(aes(fill = lag)) +
+  scale_fill_divergent(midpoint = 0,
+                       name = "Lag (weeks)") +
+  theme_void() +
+  facet_wrap(~window)
+
+coeff_windows / lag_windows
+```
+
