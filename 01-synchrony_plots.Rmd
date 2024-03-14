@@ -174,20 +174,20 @@ distr <- Peru |>
   filter(dep.code == 16) |> 
   mutate(Province = str_to_title(prov),
          District = str_to_title(distr),
-         District = if_else(District == "Teniente Cesar Lopez Rojas", "T. Cesar Lopez R.", District))
+         index = 1:53)
 
 fig_1a <- distr |> 
     ggplot() +
     geom_sf(aes(fill = Province), linewidth = 0.5, color = "black") +
-    ggrepel::geom_label_repel(aes(label = District, geometry = geometry),
-                              label.size = NA,
-                              label.padding = 0.05,
-                              na.rm = TRUE,
-                              fill = alpha("white", 0.6),
-                              stat = "sf_coordinates", 
-                              max.overlaps = 100,
-                              size = 3,
-                              segment.linetype = 3) +
+    # ggrepel::geom_label_repel(aes(label = index, geometry = geometry),
+    #                           label.size = NA,
+    #                           label.padding = 0.05,
+    #                           na.rm = TRUE,
+    #                           fill = alpha("white", 0.6),
+    #                           stat = "sf_coordinates", 
+    #                           max.overlaps = 100,
+    #                           size = 3,
+    #                           segment.linetype = 3) +
   scale_fill_manual(values = as.vector(brewer.seqseq2(8))) +
   labs(title = "A") +
   theme_void() +
@@ -197,6 +197,7 @@ fig_1a <- distr |>
   guides(fill = guide_legend(title.position = "top", 
                              title.hjust = 0.5,
                              ncol = 2))
+
 ```
 
 ### Figure 1B: Incidence line plots
@@ -658,6 +659,21 @@ fig_s5a + fig_s5b + fig_s5c + fig_s5d +
 ## Sensitivity analysis:
 
 ```{r}
+# # TLCC with max lag of 6 months (25 weeks)
+# by_distr_6m <- by_distr |> 
+#   mutate(crosscorr = purrr::map2(data, 25, cross_corr))
+# 
+# ccfs_6m <- unnest(by_distr_6m, crosscorr)
+# 
+# max_ccfs_6m <- ccfs_6m |> 
+#   select(distr, lag, acf) |> 
+#   group_by(distr) |> 
+#   mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+#   slice_max(order_by = abs(acf)) |> 
+#   mutate(acf = round(acf, 2)) |> 
+#   unique() |> 
+#   mutate(window = "6 months")
+
 # TLCC with max lag of 1 year (52 weeks)
 by_distr_1y <- by_distr |> 
   mutate(crosscorr = purrr::map2(data, 52, cross_corr))
@@ -673,32 +689,68 @@ max_ccfs_1y <- ccfs_1y |>
   unique() |> 
   mutate(window = "1 year")
 
-# TLCC with max lag of 6 months (25 weeks)
-by_distr_6m <- by_distr |> 
-  mutate(crosscorr = purrr::map2(data, 25, cross_corr))
+# TLCC with max lag of 3 years (156 weeks)
+by_distr_3y <- by_distr |> 
+  mutate(crosscorr = purrr::map2(data, 156, cross_corr))
 
-ccfs_6m <- unnest(by_distr_6m, crosscorr)
+ccfs_3y <- unnest(by_distr_3y, crosscorr)
 
-max_ccfs_6m <- ccfs_6m |> 
+max_ccfs_3y <- ccfs_3y |> 
   select(distr, lag, acf) |> 
   group_by(distr) |> 
   mutate(lag = if_else(is.na(acf), NA, lag)) |> 
   slice_max(order_by = abs(acf)) |> 
   mutate(acf = round(acf, 2)) |> 
   unique() |> 
-  mutate(window = "6 months")
+  mutate(window = "3 years")
 
+# TLCC with max lag of 4 years (208 weeks)
+by_distr_4y <- by_distr |> 
+  mutate(crosscorr = purrr::map2(data, 208, cross_corr))
+
+ccfs_4y <- unnest(by_distr_4y, crosscorr)
+
+max_ccfs_4y <- ccfs_4y |> 
+  select(distr, lag, acf) |> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf, 2)) |> 
+  unique() |> 
+  mutate(window = "4 years")
+
+# TLCC with max lag of 5 years (260 weeks)
+by_distr_5y <- by_distr |> 
+  mutate(crosscorr = purrr::map2(data, 260, cross_corr))
+
+ccfs_5y <- unnest(by_distr_5y, crosscorr)
+
+max_ccfs_5y <- ccfs_5y |> 
+  select(distr, lag, acf) |> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf, 2)) |> 
+  unique() |> 
+  mutate(window = "5 years")
+```
+
+
+```{r}
 ccf_by_window <- lines_vert |> 
   mutate(window = "2 years") |> 
   select(-district) |> 
+#  rbind(max_ccfs_6m) |> 
   rbind(max_ccfs_1y) |> 
-  rbind(max_ccfs_6m)
+  rbind(max_ccfs_3y) |> 
+  rbind(max_ccfs_4y) |> 
+  rbind(max_ccfs_5y)
 
 map_ccf_by_window <- Peru |> 
   filter(dep == "LORETO") |> 
   left_join(ccf_by_window, by = "distr")|> 
   replace_na(list(lag = 0, acf = 0)) |> 
-  mutate(window = factor(window, levels = c("6 months", "1 year", "2 years")))
+  mutate(window = factor(window, levels = c("1 year", "2 years", "3 years", "4 years", "5 years")))
 
 coeff_windows <- map_ccf_by_window |> 
   ggplot() +
@@ -706,7 +758,7 @@ coeff_windows <- map_ccf_by_window |>
   scale_fill_divergent(midpoint = 0,
                        name = "TLCC\ncoefficient") +
   theme_void() +
-  facet_wrap(~window)
+  facet_wrap(~window, ncol = 6)
 
 lag_windows <- map_ccf_by_window |> 
   ggplot() +
@@ -714,8 +766,158 @@ lag_windows <- map_ccf_by_window |>
   scale_fill_divergent(midpoint = 0,
                        name = "Lag (weeks)") +
   theme_void() +
-  facet_wrap(~window)
+  facet_wrap(~window, ncol = 6)
 
 coeff_windows / lag_windows
+
+# ggsave("plots/sensitivity1.png", height = 8, width = 12)
+# ggsave("plots/sensitivity1.eps", height = 8, width = 12)
 ```
+
+## Figure S6: Sensitivity analysis of time windows for TLCC
+
+```{r}
+pos_tlcc <- c("ANDOAS", "CAPELO", "LAGUNAS", "MANSERICHE", "MAZAN", "PUNCHANA", "RAMON CASTILLA", "SAN JUAN BAUTISTA", "SAQUENA", "TENIENTE MANUEL CLAVERO", "TIGRE", "YAVARI", "YURIMAGUAS")
+neg_tlcc <- c("ALTO TAPICHE", "CAHUAPANAS", "EMILIO SAN MARTIN", "JENARO HERRERA", "PARINARI", "PASTAZA", "SAN PABLO", "SANTA CRUZ", "SARAYACU", "SOPLIN", "TAPICHE", "YAGUAS", "YAQUERANA")
+
+ccf_plot <- map_ccf_by_window |> 
+  filter(distr != "ROSA PANDURO") |> 
+  mutate(level = case_when(window == "1 year" ~ 1,
+                           window == "2 years" ~ 2,
+                           window == "3 years" ~ 3,
+                           window == "4 years" ~ 4,
+                           window == "5 years" ~ 5),
+         bi_class = case_when(acf < 0 & lag < 0 ~ "1-1",
+                              acf > 0 & lag < 0 ~ "2-1",
+                              acf < 0 & lag > 0 ~ "1-2",
+                              acf > 0 & lag > 0 ~ "2-2"),
+         category = case_when(distr %in% pos_tlcc ~ "Consistently positive TLCC",
+                              distr %in% neg_tlcc ~ "Consistently negative TLCC",
+                              .default = "Inconsistent TLCC or lags"))
+
+ccf_plot |> 
+  ggplot(aes(x = level, y = acf, color = distr)) +
+  geom_hline(yintercept = 0) +
+  geom_line(show.legend = FALSE) +
+  facet_wrap(~prov) +
+  labs(x = "Years in window", y = "TLCC coefficient") +
+  theme_bw()
+
+ccf_plot |> 
+  ggplot(aes(x = level, y = lag, color = distr)) +
+  geom_hline(yintercept = 0) +
+  geom_line(show.legend = FALSE) +
+  facet_wrap(~prov) +
+  labs(x = "Years in window", y = "lag") +
+  theme_bw()
+
+pos_plot <- ccf_plot |> 
+  mutate(`ACF (*1000)` = acf*1000,
+         `Lag (weeks)` = lag,
+         distr = if_else(distr == "TENIENTE MANUEL CLAVERO", "T MANUEL CLAVERO", distr)) |> 
+  pivot_longer(cols = c("ACF (*1000)", "Lag (weeks)"), names_to = "cat", values_to = "value") |> 
+  filter(category == "Consistently positive TLCC") |> 
+  ggplot(aes(x = level, y = value, color = cat)) +
+  geom_hline(yintercept = 0) +
+  geom_line() +
+  facet_wrap(~ distr, ncol = 5) +
+  labs(x = "Years in window", y = "", color = "", title = "Consistently positive TLCC coefficient") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white'))
+
+neg_plot <- ccf_plot |> 
+  mutate(`ACF (*1000)` = acf*1000,
+         `Lag (weeks)` = lag) |> 
+  pivot_longer(cols = c("ACF (*1000)", "Lag (weeks)"), names_to = "cat", values_to = "value") |> 
+  filter(category == "Consistently negative TLCC") |> 
+  ggplot(aes(x = level, y = value, color = cat)) +
+  geom_hline(yintercept = 0) +
+  geom_line() +
+  facet_wrap(~ distr, ncol = 5) +
+  labs(x = "Years in window", y = "", color = "", title = "Consistently negative TLCC coefficient") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white'))
+
+others_plot <- ccf_plot |> 
+  mutate(`ACF (*1000)` = acf*1000,
+         `Lag (weeks)` = lag,
+         distr = if_else(distr == "TENIENTE CESAR LOPEZ ROJAS", "T LOPEZ ROJAS", distr)) |> 
+  pivot_longer(cols = c("ACF (*1000)", "Lag (weeks)"), names_to = "cat", values_to = "value") |> 
+  filter(category == "Inconsistent TLCC or lags") |> 
+  ggplot(aes(x = level, y = value, color = cat)) +
+  geom_hline(yintercept = 0) +
+  geom_line() +
+  facet_wrap(~ distr, ncol = 5) +
+  labs(x = "Years in window", y = "", color = "", title = "Inconsistent TLCC coefficient or lags") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "black"),
+        strip.text = element_text(colour = 'white'))
+
+layout4 <- "
+AAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAA
+BBBBBBBBBBBBBBBBBBB
+BBBBBBBBBBBBBBBBBBB
+BBBBBBBBBBBBBBBBBBB
+CCCCCCCCCCCCCCCCCCC
+CCCCCCCCCCCCCCCCCCC
+CCCCCCCCCCCCCCCCCCC
+CCCCCCCCCCCCCCCCCCC
+CCCCCCCCCCCCCCCCCCC
+CCCCCCCCCCCCCCCCCCC"
+
+fig_s6 <- pos_plot / neg_plot / others_plot + plot_annotation(tag_levels = "A") + plot_layout(design = layout4)
+
+# ggsave("plots/figureS6.png", plot = fig_s6, width = 10, height = 15)
+# ggsave("plots/figureS6.eps", plot = fig_s6, width = 10, height = 15)
+```
+
+## Figure S7
+```{r}
+fig_s7 <- ccf_plot |> 
+  group_by(geometry, category) |> 
+  summarise() |> 
+  ggplot(aes(fill = category)) +
+  geom_sf() +
+  labs(fill = "") +
+  scale_fill_brewer(palette = "RdYlBu") +
+  theme_void() +
+  theme(plot.background = element_rect(fill = "white", color = NA))
+
+# ggsave("plots/figureS7.png", plot = fig_s7, width = 5, height = 5)
+# ggsave("plots/figureS7.eps", plot = fig_s7, width = 5, height = 5)
+```
+
+## Figure S8
+```{r}
+lvs <- unique(ccf_plot$distr[order(ccf_plot$acf)])
+
+plot_s8 <- ccf_plot |> 
+  mutate(distr.ord = factor(distr, levels = lvs)) |> 
+  ggplot(aes(x = level, y = distr.ord, fill = bi_class)) +
+  geom_tile(show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 2) +
+  theme_bw() +
+  labs(x = "Years in window", y = "", fill = "")
+
+leg_s8 <- bi_legend(pal = "GrPink2",
+                    dim = 2,
+                    xlab = "TLCC-    TLCC+",
+                    ylab = "Lag-     Lag+",
+                    size = 10, arrows = FALSE)
+layout5 <- "
+AAAAAAA###
+AAAAAAA#BB
+AAAAAAA#BB
+AAAAAAA###"
+
+plot_s8 + leg_s8 +  plot_layout(design = layout5)
+
+# ggsave("plots/figureS8.png", width = 8, height = 10)
+# ggsave("plots/figureS8.eps", width = 8, height = 10, family = "sans")
+```
+
 
