@@ -781,7 +781,6 @@ pos_tlcc <- c("ANDOAS", "CAPELO", "LAGUNAS", "MANSERICHE", "MAZAN", "PUNCHANA", 
 neg_tlcc <- c("ALTO TAPICHE", "CAHUAPANAS", "EMILIO SAN MARTIN", "JENARO HERRERA", "PARINARI", "PASTAZA", "SAN PABLO", "SANTA CRUZ", "SARAYACU", "SOPLIN", "TAPICHE", "YAGUAS", "YAQUERANA")
 
 ccf_plot <- map_ccf_by_window |> 
-  filter(distr != "ROSA PANDURO") |> 
   mutate(level = case_when(window == "1 year" ~ 1,
                            window == "2 years" ~ 2,
                            window == "3 years" ~ 3,
@@ -793,6 +792,7 @@ ccf_plot <- map_ccf_by_window |>
                               acf > 0 & lag > 0 ~ "2-2"),
          category = case_when(distr %in% pos_tlcc ~ "Consistently positive TLCC",
                               distr %in% neg_tlcc ~ "Consistently negative TLCC",
+                              distr == "ROSA PANDURO" ~ "Not calculated",
                               .default = "Inconsistent TLCC or lags"))
 
 ccf_plot |> 
@@ -883,7 +883,7 @@ fig_s7 <- ccf_plot |>
   ggplot(aes(fill = category)) +
   geom_sf() +
   labs(fill = "") +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_manual(values = c("#FC8D59", "#FFFFBF", "#91BFDB", "gray")) +
   theme_void() +
   theme(plot.background = element_rect(fill = "white", color = NA))
 
