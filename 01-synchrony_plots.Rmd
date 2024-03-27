@@ -115,6 +115,8 @@ data_week_var <- data_week |>
   filter(!is.na(cases_m_var_abs)) |> 
   filter(!is.na(cases_d_var_abs))
 
+# write_rds(data_week_var, "data/dengue-malaria.rds")
+
 # Create TLCC function for lags of 2 years (104 weeks)
 cross_corr <- function(df, lag = 104) {
     tidy(ccf(x = df$cases_d_var,
