@@ -7,7 +7,7 @@ output: html_document
 ## Load packages
 ```{r}
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, broom, spdep)
+pacman::p_load(tidyverse, broom, spdep, stats)
 ```
 
 ## Load data
@@ -38,11 +38,14 @@ lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 
 ## Run TLCCs with random permutations of date
 ```{r}
-# Create empty df for results of loop
-sens_db <- data.frame(run_name = numeric(1000), positive_moran = numeric(1000), negative_moran = numeric(1000))
+# Set number of simulations to run
+n = 999
 
-# For loop
-for (i in 1:999) {
+# Create empty df for results of loop
+sens_db <- vector("list", length = n)
+
+
+for (i in 1:n) {
   # Reshuffle week start
   by_distr <- data |> 
     group_by(distr) |> 
@@ -78,22 +81,77 @@ for (i in 1:999) {
   
   # Run Local Moran's
   loc_mor <- localmoran(map$acf, lw)
-  loc_mor_full <- cbind(map, loc_mor) |> 
-    mutate(stat = if_else(Pr.z....E.Ii.. < 0.05, Ii, NA))
+  loc_mor_full <- cbind(max_ccfs, loc_mor) |> 
+    mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA),
+           run = i) |> 
+    select(run, distr, lag, acf, stat)
   
-  # Add counts of significant test statistics to db
-  sens_db$run_name[i] <- i
-  sens_db$positive_moran[i] <- sum(loc_mor_full$stat > 0, na.rm = TRUE)
-  sens_db$negative_moran[i] <- sum(loc_mor_full$stat < 0, na.rm = TRUE)
+  sens_db[[i]] <- loc_mor_full
+  
 }
 
-# write_rds(sens_db, "data/sens_results.rds")
+sens_db_full <- do.call(rbind, sens_db)
+
+# write_rds(sens_db_full, "data/sens_results_full.rds")
 ```
 
+## Rerun original TLCC
 ```{r}
-sens_db <- sens_db[1:999,]
+# Reference: TLCC with original data
+by_distr <- data |> 
+    ungroup() |> 
+    select(distr, week_start, 
+           cases_m, cases_d, 
+           cases_m_var, cases_d_var,
+           cases_m_var_abs, cases_d_var_abs) |> 
+    group_by(distr) |> 
+    nest()
+  
+# Calculate TLCC coefficients
+by_distr2 <- by_distr |> 
+  mutate(crosscorr = purrr::map(data, cross_corr)) 
 
-table(sens_db$positive_moran)
-table(sens_db$negative_moran)
+ccfs <- unnest(by_distr2, crosscorr)
+
+# Extract max ccfs
+max_ccfs <- ccfs |> 
+  select(distr, lag, acf)|> 
+  group_by(distr) |> 
+  mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+  slice_max(order_by = abs(acf)) |> 
+  mutate(acf = round(acf,2)) |> 
+  unique()
+
+# Join max ccfs to map
+map <- loreto |> 
+  left_join(max_ccfs, by = "distr") |> 
+  replace_na(list(lag = 0, acf = 0))
+
+# Run Local Moran's
+loc_mor <- localmoran(map$acf, lw)
+
+reference <- cbind(max_ccfs, loc_mor) |> 
+  mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA)) |> 
+  select(distr, lag, acf, stat)
 ```
 
+## Compare distributions of lags, TLCC coefficients and Moran's test statistics in original vs. randomly reshuffled samples
+```{r}
+# Lags
+hist(reference$lag, breaks = 12)
+hist(sens_db_full$lag, breaks = 12)
+
+ks.test(reference$lag, sens_db_full$lag)
+
+# TLCC coefficients
+hist(reference$acf, breaks = 12, freq = FALSE)
+hist(sens_db_full$acf, breaks = 12, freq = FALSE)
+
+ks.test(reference$acf, sens_db_full$acf)
+
+# Moran's test statistics
+hist(reference$stat, breaks = 12, freq = FALSE)
+hist(sens_db_full$stat, breaks = 12, freq = FALSE)
+
+ks.test(reference$stat, sens_db_full$acf)
+```
