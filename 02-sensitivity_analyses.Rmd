@@ -37,7 +37,7 @@ lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 ```
 
 ## Run TLCCs with random permutations of date
-```{r}
+```{r, eval = FALSE}
 # Set number of simulations to run
 n = 999
 
@@ -137,6 +137,8 @@ reference <- cbind(max_ccfs, loc_mor) |>
 
 ## Compare distributions of lags, TLCC coefficients and Moran's test statistics in original vs. randomly reshuffled samples
 ```{r}
+sens_db_full <- read_rds("data/sens_results_full.rds")
+
 # Lags
 hist(reference$lag, breaks = 12)
 hist(sens_db_full$lag, breaks = 12)
@@ -154,4 +156,101 @@ hist(reference$stat, breaks = 12, freq = FALSE)
 hist(sens_db_full$stat, breaks = 12, freq = FALSE)
 
 ks.test(reference$stat, sens_db_full$acf)
+```
+
+## Run TLCCs with random numbers of cases
+```{r, eval = FALSE}
+# Set number of simulations to run
+n = 999
+
+# Create empty df for results of loop
+sens_db2 <- vector("list", length = n)
+
+
+for (i in 1:n) {
+  # Assign random case numbers
+  by_distr <- data |>
+    ungroup() |> 
+    mutate(cases_m = sample(0:1500, size = nrow(data), replace = T),
+           cases_d = sample(0:1500, size = nrow(data), replace = T)) |> 
+    mutate(cases_m_var = (cases_m/lag(cases_m) - 1) * 100,
+           cases_d_var = (cases_d/lag(cases_d) - 1) * 100) |> 
+    mutate(cases_m_var = if_else(is.finite(cases_m_var), cases_m_var, 0),
+           cases_d_var = if_else(is.finite(cases_d_var), cases_d_var, 0),
+           cases_m_var = if_else(is.nan(cases_m_var), 0, cases_m_var),
+           cases_d_var = if_else(is.nan(cases_d_var), 0, cases_d_var)) |> 
+    mutate(cases_m_var_abs = (cases_m - lag(cases_m)),
+           cases_d_var_abs = (cases_d - lag(cases_d))) |> 
+    mutate(cases_m_var_abs = if_else(is.finite(cases_m_var_abs), cases_m_var_abs, 0),
+           cases_d_var_abs = if_else(is.finite(cases_d_var_abs), cases_d_var_abs, 0),
+           cases_m_var_abs = if_else(is.nan(cases_m_var_abs), 0, cases_m_var_abs),
+           cases_d_var_abs = if_else(is.nan(cases_d_var_abs), 0, cases_d_var_abs)) |> 
+    filter(!is.na(cases_m_var)) |> 
+    filter(!is.na(cases_d_var)) |> 
+    filter(!is.na(cases_m_var_abs)) |> 
+    filter(!is.na(cases_d_var_abs)) |> 
+    select(distr, week_start, 
+           cases_m, cases_d, 
+           cases_m_var, cases_d_var,
+           cases_m_var_abs, cases_d_var_abs) |> 
+    group_by(distr) |> 
+    nest()
+  
+  # Calculate TLCC coefficients
+  by_distr2 <- by_distr |> 
+    mutate(crosscorr = purrr::map(data, cross_corr)) 
+  
+  ccfs <- unnest(by_distr2, crosscorr)
+  
+  # Extract max ccfs
+  max_ccfs <- ccfs |> 
+    select(distr, lag, acf)|> 
+    group_by(distr) |> 
+    mutate(lag = if_else(is.na(acf), NA, lag)) |> 
+    slice_max(order_by = abs(acf)) |> 
+    mutate(acf = round(acf,2)) |> 
+    unique()
+  
+  # Join max ccfs to map
+  map <- loreto |> 
+    left_join(max_ccfs, by = "distr") |> 
+    replace_na(list(lag = 0, acf = 0))
+  
+  # Run Local Moran's
+  loc_mor <- localmoran(map$acf, lw)
+  loc_mor_full <- cbind(max_ccfs, loc_mor) |> 
+    mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA),
+           run = i) |> 
+    select(run, distr, lag, acf, stat)
+  
+  sens_db2[[i]] <- loc_mor_full
+  
+}
+
+sens_db2_full <- do.call(rbind, sens_db2)
+
+# write_rds(sens_db2_full, "data/sens_results_full_2.rds")
+```
+
+## Compare distributions of lags, TLCC coefficients and Moran's test statistics in original vs. randomly reshuffled samples
+```{r}
+sens_db2_full <- read_rds("data/sens_results_full_2.rds")
+
+# Lags
+hist(reference$lag, breaks = 12)
+hist(sens_db2_full$lag, breaks = 12)
+
+ks.test(reference$lag, sens_db2_full$lag)
+
+# TLCC coefficients
+hist(reference$acf, breaks = 12, freq = FALSE)
+hist(sens_db2_full$acf, breaks = 12, freq = FALSE)
+
+ks.test(reference$acf, sens_db2_full$acf)
+
+# Moran's test statistics
+hist(reference$stat, breaks = 12, freq = FALSE)
+hist(sens_db2_full$stat, breaks = 12, freq = FALSE)
+
+ks.test(reference$stat, sens_db2_full$acf)
 ```
