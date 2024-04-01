@@ -84,7 +84,7 @@ for (i in 1:n) {
   loc_mor_full <- cbind(max_ccfs, loc_mor) |> 
     mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA),
            run = i) |> 
-    select(run, distr, lag, acf, stat)
+    select(run, distr, lag, acf, stat, stat2 = `Pr(z != E(Ii))`)
   
   sens_db[[i]] <- loc_mor_full
   
@@ -132,7 +132,7 @@ loc_mor <- localmoran(map$acf, lw)
 
 reference <- cbind(max_ccfs, loc_mor) |> 
   mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA)) |> 
-  select(distr, lag, acf, stat)
+  select(distr, lag, acf, stat, stat2 = `Pr(z != E(Ii))`)
 ```
 
 ## Compare distributions of lags, TLCC coefficients and Moran's test statistics in original vs. randomly reshuffled samples
@@ -151,11 +151,17 @@ hist(sens_db_full$acf, breaks = 12, freq = FALSE)
 
 ks.test(reference$acf, sens_db_full$acf)
 
-# Moran's test statistics
+# Moran's test statistics (only significant stats)
 hist(reference$stat, breaks = 12, freq = FALSE)
 hist(sens_db_full$stat, breaks = 12, freq = FALSE)
 
-ks.test(reference$stat, sens_db_full$acf)
+ks.test(reference$stat, sens_db_full$stat)
+
+# Moran's test statistics (all stats)
+hist(reference$stat2, breaks = 12, freq = FALSE)
+hist(sens_db_full$stat2, breaks = 12, freq = FALSE)
+
+ks.test(reference$stat2, sens_db_full$stat2)
 ```
 
 ## Run TLCCs with random numbers of cases
@@ -221,7 +227,7 @@ for (i in 1:n) {
   loc_mor_full <- cbind(max_ccfs, loc_mor) |> 
     mutate(stat = if_else(`Pr(z != E(Ii))` < 0.05, Ii, NA),
            run = i) |> 
-    select(run, distr, lag, acf, stat)
+    select(run, distr, lag, acf, stat, stat2 = `Pr(z != E(Ii))`)
   
   sens_db2[[i]] <- loc_mor_full
   
@@ -248,9 +254,15 @@ hist(sens_db2_full$acf, breaks = 12, freq = FALSE)
 
 ks.test(reference$acf, sens_db2_full$acf)
 
-# Moran's test statistics
+# Moran's test statistics (only significant stats)
 hist(reference$stat, breaks = 12, freq = FALSE)
 hist(sens_db2_full$stat, breaks = 12, freq = FALSE)
 
-ks.test(reference$stat, sens_db2_full$acf)
+ks.test(reference$stat, sens_db2_full$stat)
+
+# Moran's test statistics (all stats)
+hist(reference$stat2, breaks = 12, freq = FALSE)
+hist(sens_db2_full$stat2, breaks = 12, freq = FALSE)
+
+ks.test(reference$stat2, sens_db2_full$stat2)
 ```
