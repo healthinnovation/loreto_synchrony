@@ -44,8 +44,8 @@ n = 999
 # Create empty df for results of loop
 sens_db <- vector("list", length = n)
 
-
 for (i in 1:n) {
+  set.seed(n)
   # Reshuffle week start
   by_distr <- data |> 
     group_by(distr) |> 
@@ -152,10 +152,10 @@ hist(sens_db_full$acf, breaks = 12, freq = FALSE)
 ks.test(reference$acf, sens_db_full$acf)
 
 # Moran's test statistics (only significant stats)
-hist(reference$stat, breaks = 12, freq = FALSE)
-hist(sens_db_full$stat, breaks = 12, freq = FALSE)
-
-ks.test(reference$stat, sens_db_full$stat)
+# hist(reference$stat, breaks = 12, freq = FALSE)
+# hist(sens_db_full$stat, breaks = 12, freq = FALSE)
+# 
+# ks.test(reference$stat, sens_db_full$stat)
 
 # Moran's test statistics (all stats)
 hist(reference$stat2, breaks = 12, freq = FALSE)
@@ -172,13 +172,23 @@ n = 999
 # Create empty df for results of loop
 sens_db2 <- vector("list", length = n)
 
+# calculate mean and sd for each district
+distr_stats <- data |>
+  group_by(distr) |> 
+  summarise(mean_cases_m = mean(cases_m),
+            sd_cases_m = sd(cases_m),
+            mean_cases_d = mean(cases_d),
+            sd_cases_d = sd(cases_d))
 
+set.seed(14)
 for (i in 1:n) {
+  set.seed(n)
   # Assign random case numbers
   by_distr <- data |>
     ungroup() |> 
-    mutate(cases_m = sample(0:1500, size = nrow(data), replace = T),
-           cases_d = sample(0:1500, size = nrow(data), replace = T)) |> 
+    left_join(distr_stats, by = "distr") |> 
+    mutate(cases_m = rnorm(n(), mean = mean_cases_m, sd = sd_cases_m),
+           cases_d = rnorm(n(), mean = mean_cases_d, sd = sd_cases_d)) |> 
     mutate(cases_m_var = (cases_m/lag(cases_m) - 1) * 100,
            cases_d_var = (cases_d/lag(cases_d) - 1) * 100) |> 
     mutate(cases_m_var = if_else(is.finite(cases_m_var), cases_m_var, 0),
@@ -255,10 +265,10 @@ hist(sens_db2_full$acf, breaks = 12, freq = FALSE)
 ks.test(reference$acf, sens_db2_full$acf)
 
 # Moran's test statistics (only significant stats)
-hist(reference$stat, breaks = 12, freq = FALSE)
-hist(sens_db2_full$stat, breaks = 12, freq = FALSE)
-
-ks.test(reference$stat, sens_db2_full$stat)
+# hist(reference$stat, breaks = 12, freq = FALSE)
+# hist(sens_db2_full$stat, breaks = 12, freq = FALSE)
+# 
+# ks.test(reference$stat, sens_db2_full$stat)
 
 # Moran's test statistics (all stats)
 hist(reference$stat2, breaks = 12, freq = FALSE)
