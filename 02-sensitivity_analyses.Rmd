@@ -172,23 +172,40 @@ n = 999
 # Create empty df for results of loop
 sens_db2 <- vector("list", length = n)
 
-# calculate mean and sd for each district
+# run nb regression for each district, extract parameters and save in summary dataset
+# (remove Rosa Panduro, has no dengue cases)
 distr_stats <- data |>
+  filter(distr != "ROSA PANDURO") |> 
   group_by(distr) |> 
-  summarise(mean_cases_m = mean(cases_m),
-            sd_cases_m = sd(cases_m),
-            mean_cases_d = mean(cases_d),
-            sd_cases_d = sd(cases_d))
+  do({
+    model_m <- MASS::glm.nb(cases_m ~ 1, data = .)
+    parameters_m <- coefficients(summary(model_m))
+    mean_cases_m <- exp(parameters_m[1, 1])
+    size_param_m <- parameters_m[1, 2]^(-1)
+    model_d <- MASS::glm.nb(cases_d ~ 1, data = .)
+    parameters_d <- coefficients(summary(model_d))
+    mean_cases_d <- exp(parameters_d[1, 1])
+    size_param_d <- parameters_d[1, 2]^(-1)
+    data.frame(distr = unique(.$distr), 
+               mean_cases_m = mean_cases_m,
+               size_param_m = size_param_m,
+               mean_cases_d = mean_cases_d,
+               size_param_d = size_param_d)
+  })
 
-set.seed(14)
+# create new nb list and spatial weights without Rosa Panduro
+nb <- poly2nb(loreto[loreto$distr != "ROSA PANDURO",], queen = TRUE)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
 for (i in 1:n) {
   set.seed(n)
   # Assign random case numbers
   by_distr <- data |>
+    filter(distr != "ROSA PANDURO") |> 
     ungroup() |> 
     left_join(distr_stats, by = "distr") |> 
-    mutate(cases_m = rnorm(n(), mean = mean_cases_m, sd = sd_cases_m),
-           cases_d = rnorm(n(), mean = mean_cases_d, sd = sd_cases_d)) |> 
+    mutate(cases_m = rnbinom(n(), size = size_param_m, mu = mean_cases_m),
+           cases_d = rnbinom(n(), size = size_param_d, mu = mean_cases_d)) |> 
     mutate(cases_m_var = (cases_m/lag(cases_m) - 1) * 100,
            cases_d_var = (cases_d/lag(cases_d) - 1) * 100) |> 
     mutate(cases_m_var = if_else(is.finite(cases_m_var), cases_m_var, 0),
@@ -230,6 +247,7 @@ for (i in 1:n) {
   # Join max ccfs to map
   map <- loreto |> 
     left_join(max_ccfs, by = "distr") |> 
+    filter(distr != "ROSA PANDURO") |> 
     replace_na(list(lag = 0, acf = 0))
   
   # Run Local Moran's
