@@ -1,6 +1,6 @@
 # Spatiotemporal co-distribution and time lagged cross correlation of malaria and dengue in Loreto, Peru
 
-**Authors:** Paloma M. Carcamo, Gabriel Carrasco-Escobar, Samantha R. Kaplan, Jesús M. Quispe, Gordon C. McCord, Tarik Benmarhnia  
+**Authors:** Paloma M. Cárcamo, Gabriel Carrasco-Escobar, Samantha R. Kaplan, Jesús M. Quispe, Gordon C. McCord, Tarik Benmarhnia  
 
 This repository contains R code and figures for analyzing spatiotemporal synchrony between malaria and dengue in the Loreto region. The key analyses include cross-correlation, spatial synchronization, sensitivity checks, and mapping.  
 
