@@ -3,3 +3,7 @@
 .RData
 .Ruserdata
 plots/
+03-synchrony_plots_poster.Rmd
+data/sens_results.rds
+data/sens_results_full.rds
+data/sens_results_full_2.rds
