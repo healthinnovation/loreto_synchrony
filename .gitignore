@@ -7,3 +7,4 @@ plots/
 data/sens_results.rds
 data/sens_results_full.rds
 data/sens_results_full_2.rds
+data/dengue-malaria.rds
